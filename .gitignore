@@ -1,0 +1,2 @@
+# Ignore model files
+gaze_model_epoch70_normalize28(eye image, gaze coordinate)_CosineAnnealingLR(20, 1e-7)_val_loss_0.0809_normalize1Dataset_batch32
