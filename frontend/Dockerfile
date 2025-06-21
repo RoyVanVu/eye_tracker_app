@@ -1,9 +1,8 @@
-FROM node:22-alpine
+FROM node:22-bullseye
 
 WORKDIR /app
 
 COPY package*.json ./
-
 RUN npm install
 
 # Copy the rest of application file 

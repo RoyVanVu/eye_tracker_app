@@ -2658,16 +2658,18 @@ const drawPath = (ctx, points, closePath) => {
 export const drawMesh = (predictions, ctx) => {
     if (predictions.length > 0) {
         predictions.forEach((prediction) => {
-            const keypoints = prediction.scaledMesh;
+            const keypoints = prediction.keypoints; 
             const leftEyeIndices = [33, 133, 160, 159, 158, 157, 173, 144, 145, 153, 154, 155];
             const rightEyeIndices = [362, 263, 387, 386, 385, 384, 398, 373, 374, 380, 381, 382];
 
             const drawEye = (eyeIndices) => {
                 const points = eyeIndices.map((i) => keypoints[i]);
-                drawPath(ctx, points, true);
-                points.forEach(([x, y]) => {
+                const pathPoints = points.map(point => [point.x, point.y]);
+                drawPath(ctx, pathPoints, true);
+                
+                points.forEach((point) => { 
                     ctx.beginPath();
-                    ctx.arc(x, y, 1, 0, 2 * Math.PI);
+                    ctx.arc(point.x, point.y, 1, 0, 2 * Math.PI); 
                     ctx.fillStyle = 'aqua';
                     ctx.fill();
                 });
