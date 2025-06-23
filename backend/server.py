@@ -9,6 +9,11 @@ import traceback
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS 
+import torch.optim as optim 
+import torch.nn.functional as F 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import copy
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -103,6 +108,10 @@ model.to(device)
 print(f"Using device: {device}")
 
 prediction_counter = 0
+calibration_data = []
+calibrated_model = None
+max_calibration_samples = 50
+is_calibration_active = False
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -164,11 +173,19 @@ def predict():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    global calibrated_model, calibration_data, is_calibration_active
+
     return jsonify({
         'status': 'healthy',
         'device': str(device),
         'model_loaded': True,
-        'predictions_made': prediction_counter
+        'predictions_made': prediction_counter,
+        'calibration': {
+            'is_active': is_calibration_active,
+            'samples_collected': len(calibration_data),
+            'has_calibrated_model': calibrated_model is not None,
+            'active_model': 'calibrated' if calibrated_model is not None else 'original'
+        }
     })
 
 @app.route('/test', methods=['GET'])
@@ -179,6 +196,196 @@ def test_endpoint():
         'device': str(device),
         'predictions_made': prediction_counter
     })
+
+@app.route('/calibration/start', methods=['POST'])
+def start_calibration():
+    global calibration_data, is_calibration_active
+
+    try:
+        calibration_data = []
+        is_calibration_active = True
+        logger.info("Calibration session started")
+        return jsonify({
+            'status': 'success',
+            'message': 'Calibration started',
+            'max_samples': max_calibration_samples,
+            'current_samples': 0
+        })
+    except Exception as e:
+        logger.error(f"Error starting calibration: {e}")
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+@app.route('/calibration/status', methods=['GET'])
+def calibration_status():
+    global calibration_data, is_calibration_active, calibrated_model
+
+    return jsonify({
+        'is_active': is_calibration_active,
+        'samples_collected': len(calibration_data),
+        'max_samples': max_calibration_samples,
+        'progress': len(calibration_data) / max_calibration_samples if max_calibration_samples > 0 else 0,
+        'can_finish': len(calibration_data) >= 10,
+        'has_calibrated_model': calibrated_model is not None
+    })
+
+@app.route('/calibration/reset', methods=['POST'])
+def reset_calibration():
+    global calibration_data, is_calibration_active, calibrated_model
+    calibration_data = []
+    is_calibration_active = False
+    calibrated_model = None
+    logger.info("Calibration reset")
+
+    return jsonify({
+        'status': 'success', 'message': 'Calibration reset'
+    })
+
+@app.route('/calibration/test', methods=['GET'])
+def test_calibration():
+    """Test endpoint to verify calibration functionality"""
+    return jsonify({
+        'message': 'Calibration endpoints are working!',
+        'available_endpoints': [
+            '/calibration/start',
+            '/calibration/add_sample',
+            '/calibration/status',
+            '/calibration/reset',
+            '/calibration/test'
+        ],
+        'current_status': {
+            'is_active': is_calibration_active,
+            'samples_collected': len(calibration_data),
+            'has_calibrated_model': calibrated_model is not None
+        }
+    })
+
+@app.route('/calibration/add_sample', methods=['POST'])
+def add_calibration_sample():
+    """Add a calibration sample (eye images + target gaze position)"""
+    global calibration_data, is_calibration_active
+    if not is_calibration_active:
+        return jsonify({
+            'error': 'Calibration not active. Please start calibration first.'
+        }), 400
+    
+    try:
+        data = request.json
+        if not data:
+            return jsonify({
+                'error': 'No JSON data received'
+            }), 400
+
+        required_fields = ['leftEye', 'rightEye', 'targetX', 'targetY']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'error': f'Missing required field: {field}'
+                }), 400
+        
+        left_eye_tensor = preprocess_image(data['leftEye'])
+        right_eye_tensor = preprocess_image(data['rightEye'])
+        if left_eye_tensor is None or right_eye_tensor is None:
+            return jsonify({
+                'error': 'Failed to process eye images'
+            }), 400
+        
+        target_x = float(data['targetX'])
+        target_y = float(data['targetY'])
+        if not (0 <= target_x <= 1 and 0 <= target_y <= 1):
+            return jsonify({
+                'error': 'Target coordinates must be between 0 and 1'
+            }), 400
+
+        sample = {
+            'left_eye': left_eye_tensor.cpu(),
+            'right_eye': right_eye_tensor.cpu(),
+            'target_gaze': torch.tensor([target_x, target_y], dtype=torch.float32)
+        }
+        calibration_data.append(sample)
+
+        current_count = len(calibration_data)
+        logger.info(f"Added calibration sample {current_count}/{max_calibration_samples}")
+        logger.info(f"Target: ({target_x:.3f}, {target_y:.3f})")
+
+        if current_count >= max_calibration_samples:
+            logger.info(f"Maximum calibration samples ({max_calibration_samples}) reached!")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Sample added successfully',
+            'samples_collected': current_count,
+            'max_samples': max_calibration_samples,
+            'progress': current_count / max_calibration_samples,
+            'can_finish': current_count >= 10,
+            'is_complete': current_count >= max_calibration_samples
+        })
+    
+    except ValueError as e:
+        logger.error(f"Invalid data format: {e}")
+        return jsonify({
+            'error': f'Invalid data format: {str(e)}'
+        }), 400
+    except Exception as e:
+        logger.error(f"Error adding calibration sample: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
+
+@app.route('/calibration/add_test_sample', methods=['POST'])
+def add_test_calibration_sample():
+    global calibration_data, is_calibration_active
+    if not is_calibration_active:
+        return jsonify({
+            'error': 'Calibration is not active. Please start calibration first.'
+        }), 400
+    
+    try:
+        data = request.json or {}
+
+        target_x = float(data.get('targetX', 0.5))
+        target_y = float(data.get('targetY', 0.5))
+        if not (0 <= target_x <= 1 and 0 <= target_y <= 1):
+            return jsonify({
+                'error': 'Target coordinates must be between 0 and 1'
+            }), 400
+        
+        dummy_left = torch.randn(1, 3, 224, 224)
+        dummy_right = torch.randn(1, 3, 224, 224)
+        sample = {
+            'left_eye': dummy_left.cpu(),
+            'right_eye': dummy_right.cpu(),
+            'target_gaze': torch.tensor([target_x, target_y], dtype=torch.float32)
+        }
+        calibration_data.append(sample)
+
+        current_count = len(calibration_data)
+        logger.info(f"Added test calibration sample {current_count}/{max_calibration_samples}")
+        logger.info(f"Target: ({target_x:.3f}, {target_y:.3f})")
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Test sample add successfully',
+            'samples_collected': current_count,
+            'max_samples': max_calibration_samples,
+            'progress': current_count / max_calibration_samples,
+            'can_finish': current_count >= 10,
+            'is_complete': current_count >= max_calibration_samples
+        })
+    
+    except ValueError as e:
+        logger.error(f"Invalid data format: {e}")
+        return jsonify({
+            'error': f'Invalid data format: {str(e)}'
+        }), 400
+    except Exception as e:
+        logger.error(f"Error adding test calibration sample: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': f'Internal server error {str(e)}'
+        }), 500
 
 if __name__ == '__main__':
     logger.info('Starting Flask server...')
