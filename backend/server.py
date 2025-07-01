@@ -28,11 +28,15 @@ class GazeTrackingModel(nn.Module):
         self.left_eye_cnn = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
             nn.Flatten(),
         )
 
         self.right_eye_cnn = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -45,7 +49,7 @@ class GazeTrackingModel(nn.Module):
             nn.Linear(cnn_output_size * 2, 128),
             nn.ReLU(),
             nn.Linear(128, 2),
-            nn.Sigmoid(),
+            # nn.Sigmoid(),
         )
     
     def _get_cnn_output_size(self, x):
@@ -176,7 +180,7 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
 
 print("Loading eye tracking model...")
 model = GazeTrackingModel()
-model_path = "/app/model/gaze_model_epoch70_normalize28(eye image, gaze coordinate)_CosineAnnealingLR(20, 1e-7)_val_loss_0.0809_normalize1Dataset_batch32"
+model_path = "/app/model/INTERRUPTED_gaze_model_epoch014_20250628_120254.pth"
 try:
     checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['model_state_dict'])

@@ -8,13 +8,29 @@ const GazeIndicator = ({ gazeCoordinates, serverStatus, isVisible = true }) => {
         return null;
     }
 
+    const rawX = gazeCoordinates.x * window.innerWidth;
+    const rawY = gazeCoordinates.y * window.innerHeight;
+
+    const padding = 5;
+    const indicatorSize = 20;
+    const halfSize = indicatorSize / 2;
+
+    const clampedX = Math.min(
+        Math.max(rawX, padding + halfSize),
+        window.innerWidth - padding - halfSize
+    );
+    const clampedY = Math.min(
+        Math.max(rawY, padding + halfSize),
+        window.innerHeight - padding - halfSize
+    );
+
     return (
         <div style={{
-            position: "absolute",
-            left: `${gazeCoordinates.x * window.innerWidth}px`,
-            top: `${gazeCoordinates.y * window.innerHeight}px`,
-            width: "20px",
-            height: "20px",
+            position: "fixed",
+            left: `${clampedX}px`,
+            top: `${clampedY}px`,
+            width: `${indicatorSize}px`,
+            height: `${indicatorSize}px`,
             borderRadius: "50%",
             backgroundColor: "red",
             transform: "translate(-50%, -50%)",

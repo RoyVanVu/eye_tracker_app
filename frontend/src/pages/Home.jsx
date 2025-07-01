@@ -3,7 +3,12 @@ import FaceDetection from "../components/FaceDetection";
 
 function Home() {
     return (
-        <div>
+        <div style={{
+            height: '100vh',
+            width: '100vw',
+            overflow: 'hidden',
+            position: 'relative'
+        }}>
             <header className="App-header">
                 <FaceDetection />
             </header>

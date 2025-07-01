@@ -1,3 +1,4 @@
 # Ignore model files
 gaze_model_epoch70_normalize28(eye image, gaze coordinate)_CosineAnnealingLR(20, 1e-7)_val_loss_0.0809_normalize1Dataset_batch32
 INTERRUPTED_gaze_model_epoch014_20250628_120254.pth
+INTERRUPTED_gaze_model_epoch004_20250630_232706.pth
