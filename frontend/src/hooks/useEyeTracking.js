@@ -1,9 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import axios from 'axios';
 
 const API_URL = "http://127.0.0.1:5000";
 
-export const useCalibration = () => {
+export const useEyeTracking = () => {
+    const [gazeCoordinates, setGazeCoordinates] = useState({ x: 0, y: 0});
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [predictionCount, setPredictionCount] = useState(0);
+    const [gazeError, setGazeError] = useState(null);
+
     const [calibrationState, setCalibrationState] = useState('inactive');
     const [samplesCollected, setSamplesCollected] = useState(0);
     const [maxSamples, setMaxSamples] = useState(50);
@@ -13,13 +18,138 @@ export const useCalibration = () => {
     const [activeModel, setActiveModel] = useState('original');
     const [hasCalibrated, setHasCalibrated] = useState(false);
     const [trainingResults, setTrainingResults] = useState(null);
-    const [lastError, setLastError] = useState(null);
+    const [calibrationError, setCalibrationError] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+
+    const [serverStatus, setServerStatus] = useState("Connecting...");
+    const [serverError, setServerError] = useState(null);
+
+    useEffect(() => { 
+        const checkServerStatus = async () => {
+            try {
+                console.log("Frontend: Starting health check...");
+                console.log("Frontend: API_URL =", API_URL);
+                console.log("Frontend: Full URL =", `${API_URL}/health`);
+                
+                const response = await axios.get(`${API_URL}/health`, {
+                    timeout: 3000
+                });
+                
+                console.log("Frontend: Response received!");
+                console.log("Frontend: response.status =", response.status);
+                console.log("Frontend: response.data =", response.data);
+                console.log("Frontend: typeof response.status =", typeof response.status);
+                
+                // More explicit check
+                if (response.status === 200) {
+                    console.log("Frontend: Status is 200, setting to Connected");
+                    setServerStatus("Connected");
+                    setServerError(null);
+                    console.log("Frontend: Server status set to Connected");
+                } else {
+                    console.log("Frontend: Status is not 200, got:", response.status);
+                    setServerStatus("Disconnected");
+                    setServerError(`Unexpected status code: ${response.status}`);
+                }
+            } catch (error) {
+                console.error("Frontend: Health check failed");
+                console.error("Frontend: Error type:", error.constructor.name);
+                console.error("Frontend: Error message:", error.message);
+                console.error("Frontend: Error code:", error.code);
+                console.error("Frontend: Error response:", error.response);
+                console.error("Frontend: Full error:", error);
+                
+                setServerStatus("Disconnected");
+                setServerError(`Connection error: ${error.message}`);
+            }
+        };
+
+        console.log("Frontend: Initializing health check...");
+        checkServerStatus();
+        
+        const interval = setInterval(() => {
+            console.log("Frontend: Running periodic health check...");
+            checkServerStatus();
+        }, 5000);
+
+        return () => {
+            console.log("Frontend: Cleaning up health check interval");
+            clearInterval(interval);
+        };
+    }, []);
+
+    const canvasToBase64 = useCallback((canvas) => {
+        try {
+            if (!canvas || canvas.width === 0 || canvas.height === 0) {
+                console.error("Canvas is invalid or has zero dimensions");
+                return null;
+            }
+            return canvas.toDataURL('image/jpeg', 0.8);
+        } catch (error) {
+            console.error("Error converting canvas to base64:", error);
+            return null;
+        }
+    }, []);
+
+    const predictGaze = useCallback(async (leftEyeCanvas, rightEyeCanvas) => {
+        console.log("predictGaze function called!");
+        if (isProcessing) {
+            console.log(`Skipping prediction - Processing: ${isProcessing}`);
+            return;
+        }
+
+        try {
+            setIsProcessing(true);
+            console.log("Starting gaze prediction...");
+
+            const leftEyeBase64 = canvasToBase64(leftEyeCanvas);
+            const rightEyeBase64 = canvasToBase64(rightEyeCanvas);
+            if (!leftEyeBase64 || !rightEyeBase64) {
+                console.error("Failed to convert eye image to base64");
+                setGazeError("Failed to convert eye images");
+                return;
+            }
+
+            console.log("Sending prediction request to backend...");
+            const response = await axios.post(`${API_URL}/predict`, {
+                leftEye: leftEyeBase64,
+                rightEye: rightEyeBase64
+            }, {
+                timeout: 5000,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = response.data;
+            console.log("Gaze prediction response:", data);
+            if (data.gaze && typeof data.gaze.x === 'number' && typeof data.gaze.y === 'number') {
+                setGazeCoordinates(data.gaze);
+                setPredictionCount(prev => prev + 1);
+                setGazeError(null);
+                console.log("Prediction successful:", data.gaze);
+            } else {
+                console.error("Invalid gaze data received:", data);
+                setGazeError("Invalid prediction data received");
+            }
+        } catch (error) {
+            console.error("Error predicting gaze:", error);
+            setGazeError(`Prediction error: ${error.response?.data?.error || error.message}`);
+            
+            if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+                setServerStatus("Disconnected");
+            }
+        } finally {
+            setTimeout(() => {
+                setIsProcessing(false);
+            }, 300);
+        }
+    }, [isProcessing, canvasToBase64]);
 
     const startCalibration = useCallback(async () => {
         try {
             setIsLoading(true);
-            setLastError(null);
+            setCalibrationError(null);
             console.log("Starting calibration session...");
 
             const response = await axios.post(`${API_URL}/calibration/start`);
@@ -32,8 +162,8 @@ export const useCalibration = () => {
                 setIsCompleted(false);
                 setTrainingResults(null);
                 console.log("Calibration started successfully");
-                return { 
-                    success: true 
+                return {
+                    success: true
                 };
             } else {
                 throw new Error(response.data.message || 'Failed to start calibration');
@@ -41,7 +171,7 @@ export const useCalibration = () => {
         } catch (error) {
             console.error("Error starting calibration:", error);
             const errorMessage = error.response?.data?.error || error.message;
-            setLastError(`Failed to start calibration: ${errorMessage}`);
+            setCalibrationError(`Failed to start calibration: ${errorMessage}`);
             setCalibrationState('inactive');
             return {
                 success: false,
@@ -77,7 +207,7 @@ export const useCalibration = () => {
                 targetY: targetY
             }, {
                 timeout: 10000,
-                headers: {
+                headers: { 
                     'Content-Type': 'application/json'
                 }
             });
@@ -86,7 +216,6 @@ export const useCalibration = () => {
                 setProgress(response.data.progress);
                 setCanFinish(response.data.can_finish);
                 setIsCompleted(response.data.is_completed);
-
                 console.log(`Sample added successfully. Progress: ${(response.data.progress * 100).toFixed(1)}%`);
 
                 return {
@@ -102,7 +231,7 @@ export const useCalibration = () => {
         } catch (error) {
             console.error("Error adding calibration sample:", error);
             const errorMessage = error.response?.data?.error || error.message;
-            setLastError(`Failed to add sample: ${errorMessage}`);
+            setCalibrationError(`Failed to add sample: ${errorMessage}`);
             return {
                 success: false,
                 error: errorMessage
@@ -130,7 +259,7 @@ export const useCalibration = () => {
         try {
             setIsLoading(true);
             setCalibrationState('training');
-            setLastError(null);
+            setCalibrationError(null);
             console.log("Starting calibration training...");
 
             const params = {
@@ -142,8 +271,8 @@ export const useCalibration = () => {
 
             const response = await axios.post(`${API_URL}/calibration/finish`, params, {
                 timeout: 60000,
-                headers: {
-                    'Content-Type': 'application/json'
+                headers: { 
+                    'Content-Type': 'application/json' 
                 }
             });
             if (response.data.status === 'success') {
@@ -152,7 +281,6 @@ export const useCalibration = () => {
                 setActiveModel('calibrated');
                 setHasCalibrated(true);
                 console.log("Calibration training completed successfully!");
-                console.log("Training results:", response.data.training_info);
 
                 return {
                     success: true,
@@ -165,7 +293,7 @@ export const useCalibration = () => {
         } catch (error) {
             console.error("Error finishing calibration:", error);
             const errorMessage = error.response?.data?.error || error.message;
-            setLastError(`Training failed: ${errorMessage}`);
+            setCalibrationError(`Training failed: ${errorMessage}`);
             setCalibrationState('active');
             return {
                 success: false,
@@ -176,7 +304,7 @@ export const useCalibration = () => {
         }
     }, [calibrationState, canFinish]);
 
-    const resetCalibration = useCallback(async () => {
+    const resetCalibration =  useCallback(async () => {
         try {
             setIsLoading(true);
             console.log("Resetting calibration...");
@@ -189,7 +317,7 @@ export const useCalibration = () => {
                 setCanFinish(false);
                 setIsCompleted(false);
                 setTrainingResults(null);
-                setLastError(null);
+                setCalibrationError(null);
                 console.log("Calibration reset successfully");
                 return {
                     success: true
@@ -200,7 +328,7 @@ export const useCalibration = () => {
         } catch (error) {
             console.error("Error resetting calibration:", error);
             const errorMessage = error.response?.data?.error || error.message;
-            setLastError(`Failed to reset: ${errorMessage}`);
+            setCalibrationError(`Failed to reset: ${errorMessage}`);
             return {
                 success: false,
                 error: errorMessage
@@ -220,7 +348,7 @@ export const useCalibration = () => {
         }
 
         if (modelType === 'calibrated' && !hasCalibrated) {
-            console.warn("Cannot switch to calibrated model - no calibration model avaliable");
+            console.warn("Cannot switch to calibrated model - no calibration model available");
             return {
                 success: false,
                 error: "No calibrated model available"
@@ -247,7 +375,7 @@ export const useCalibration = () => {
         } catch (error) {
             console.error("Error switching model:", error);
             const errorMessage = error.response?.data?.error || error.message;
-            setLastError(`Failed to switch model: ${errorMessage}`);
+            setCalibrationError(`Failed to switch model: ${errorMessage}`);
             return {
                 success: false,
                 error: errorMessage
@@ -257,59 +385,40 @@ export const useCalibration = () => {
         }
     }, [hasCalibrated]);
 
-    const getCalibrationStatus = useCallback(async () => {
-        try {
-            const response = await axios.get(`${API_URL}/calibration/status`);
-            const status = response.data;
-
-            setSamplesCollected(status.samples_collected || 0);
-            setMaxSamples(status.max_samples || 50);
-            setProgress(status.progress || 0);
-            setCanFinish(status.can_finish || false);
-            setHasCalibrated(status.has_calibrated_model || false);
-            if (status.is_active && calibrationState === 'inactive') {
-                setCalibrationState('active');
-            } else if (!status.is_active && calibrationState === 'active') {
-                setCalibrationState('inactive');
-            }
-
-            return {
-                success: true,
-                status
-            };
-        } catch (error) {
-            console.error("Error getting calibration status:", error);
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }, [calibrationState]);
-
     return {
+        gazeCoordinates,
+        isProcessing,
+        predictionCount,
+        predictGaze,
+
         calibrationState,
         samplesCollected,
         maxSamples,
-        progress,
+        progressPercent: Math.round(progress * 100),
         canFinish,
         isCompleted,
         activeModel,
         hasCalibrated,
         trainingResults,
-        lastError,
         isLoading,
-
         startCalibration,
         addCalibrationSample,
         finishCalibration,
         resetCalibration,
         switchModel,
-        getCalibrationStatus,
 
-        progressPercent: Math.round(progress * 100),
-        samplesRemaining: Math.max(0, 10 - samplesCollected),
+        serverStatus,
+        isConnected: serverStatus === 'Connected',
+        isDisconnected: serverStatus === 'Disconnected',
+        isConnecting: serverStatus === 'Connecting...',
+
+        lastError: gazeError || calibrationError || serverError,
+        gazeError,
+        calibrationError,
+        serverError,
+
         isActive: calibrationState === 'active',
         isTraining: calibrationState === 'training',
-        isCompleted: calibrationState === 'completed',
+        samplesRemaining: Math.max(0, 10 - samplesCollected),
     };
 };

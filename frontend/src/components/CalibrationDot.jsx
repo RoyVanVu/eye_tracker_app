@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 const CalibrationDot = ({
     isActive,
@@ -16,73 +16,145 @@ const CalibrationDot = ({
     const [dotState, setDotState] = useState('waiting');
     const [countdown, setCountdown] = useState(3);
 
+    const currentDotRef = useRef(currentDot);
+    const samplesCollectedRef = useRef(samplesCollected);
+    const maxSamplesRef = useRef(maxSamples);
+    const onCaptureSampleRef = useRef(onCaptureSample);
+    const onCompleteRef = useRef(onComplete);
+
+    useEffect(() => {
+        currentDotRef.current = currentDot;
+    }, [currentDot]);
+    useEffect(() => {
+        samplesCollectedRef.current = samplesCollected;
+    }, [samplesCollected]);
+    useEffect(() => {
+        maxSamplesRef.current = maxSamples;
+    }, [maxSamples]);
+    useEffect(() => {
+        onCaptureSampleRef.current = onCaptureSample;
+    }, [onCaptureSample]);
+    useEffect(() => {
+        onCompleteRef.current = onComplete;
+    }, [onComplete]);
+
+    console.log("CalibrationDot render:", {
+        isActive,
+        samplesCollected,
+        dotState,
+        countdown
+    });
+
     const generateRandomPosition = useCallback(() => {
         const margin = 0.05;
         const x = margin + Math.random() * (1 - 2 * margin);
         const y = margin + Math.random() * (1 - 2 * margin);
-        return { x, y };
+        return { 
+            x, 
+            y 
+        };
     }, []);
 
     const moveToNextPoint = useCallback(() => {
-        setCurrentDot(generateRandomPosition());
+        console.log("Moving to next point");
+        const newPosition = generateRandomPosition();
+        setCurrentDot(newPosition);
         setDotState('waiting');
         setCountdown(3);
+
+        setTimeout(() => {
+            console.log("Auto-starting next dot sequence");
+            setDotState('active');
+            setCountdown(3);
+        }, 1000)
     }, [generateRandomPosition]);
 
-    const startDotSequence = useCallback(() => {
-        setDotState('active');
-        setCountdown(3);
-    }, []);
-
-    const captureSample = useCallback(() => {
+    const captureCurrentSample = useCallback(() => {
+        console.log("Capturing sample!");
         setDotState('capturing');
-        onCaptureSample(currentDot.x, currentDot.y);
+
+        onCaptureSampleRef.current(currentDotRef.current.x, currentDotRef.current.y);
+
         setTimeout(() => {
-            if (samplesCollected + 1 >= maxSamples) {
-                onComplete();
+            if (samplesCollectedRef.current + 1 >= maxSamplesRef.current) {
+                console.log("Calibration complete!");
+                onCompleteRef.current();
             } else {
                 moveToNextPoint();
             }
         }, 800);
-    }, [currentDot, onCaptureSample, onComplete, samplesCollected, maxSamples, moveToNextPoint]);
+    }, [moveToNextPoint]);
 
     useEffect(() => {
-        if (dotState === 'active' && countdown > 0) {
-            const timer = setTimeout(() => {
-                setCountdown(prev => prev - 1);
-            }, 1000);
-            return () => clearTimeout(timer);
-        } else if (dotState === 'active' && countdown === 0) {
-            captureSample();
+        if (!isActive || dotState !== 'active') {
+            return;
         }
-    }, [dotState, countdown, captureSample]);
+        console.log("Starting countdown timer");
+
+        const intervalId = setInterval(() => {
+            setCountdown(prevCountdown => {
+                console.log(`Countdown tick: ${prevCountdown}`);
+
+                if (prevCountdown > 1) {
+                    return prevCountdown - 1;
+                } else {
+                    console.log("Countdown complete - capturing!");
+                    clearInterval(intervalId);
+                    captureCurrentSample();
+                    return 0;
+                }
+            });
+        }, 1000);
+
+        return () => {
+            console.log("Cleaning up countdown timer");
+            clearInterval(intervalId);
+        };
+    }, [isActive, dotState]);
 
     useEffect(() => {
         if (isActive) {
-            const timer = setTimeout(() => {
-                startDotSequence();
+            console.log("Calibration activated");
+            setCurrentDot({ 
+                x: 0.5, 
+                y: 0.5 
+            });
+            setDotState('waiting');
+            setCountdown(3);
+
+            setTimeout(() => {
+                console.log("Starting first dot sequence");
+                setDotState('active');
+                setCountdown(3);
             }, 1000);
-            return () => clearTimeout(timer);
+        } else {
+            console.log("Calibration deactivated");
+            setDotState('waiting');
+            setCountdown(3);
         }
-    }, [isActive, startDotSequence]);
+    }, [isActive]);
 
     useEffect(() => {
         const handleKeyPress = (event) => {
             if (!isActive) return;
 
             if (event.key === 'Escape') {
+                console.log("ESC pressed");
                 onCancel();
             } else if (event.key === ' ' || event.key === 'Enter') {
+                console.log("Space/Enter pressed");
                 if (dotState === 'waiting') {
-                    startDotSequence();
-                } else if (dotState === 'active' && countdown === 0) {
-                    captureSample();
+                    setDotState('active');
+                    setCountdown(3);
+                } else if (dotState === 'active') {
+                    captureCurrentSample();
                 }
             }
         };
+
         window.addEventListener('keydown', handleKeyPress);
         return () => window.removeEventListener('keydown', handleKeyPress);
-    }, [isActive, dotState, countdown, onCancel, startDotSequence, captureSample]);
+    }, [isActive, dotState, onCancel, captureCurrentSample]);
 
     if (!isActive) return null;
 
@@ -139,7 +211,7 @@ const CalibrationDot = ({
                 }}
             />
 
-            {/* Countdown number above the dot */}
+            {/* Countdown display */}
             {dotState === 'active' && countdown > 0 && (
                 <div style={{
                     position: 'fixed',
@@ -193,7 +265,7 @@ const CalibrationDot = ({
                     marginTop: '3px',
                     color: '#ccc'
                 }}>
-                    ESC to cancel
+                    ESC to cancel | SPACE to capture
                 </div>
             </div>
         </>

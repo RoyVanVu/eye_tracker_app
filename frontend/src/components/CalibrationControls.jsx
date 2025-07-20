@@ -177,7 +177,7 @@ const CalibrationControls = ({
                 <div style={{
                     marginBottom: '15px',
                     padding: '10px',
-                    backgroundColor: 'rgba(40, 167, 69 0.2)',
+                    backgroundColor: 'rgba(40, 167, 69, 0.2)',
                     borderRadius: '8px',
                     border: '1px solid rgba(40, 167, 69, 0.4)',
                 }}>
@@ -192,7 +192,7 @@ const CalibrationControls = ({
                         fontSize: '12px',
                         lineHeight: '1.4'
                     }}>
-                        <div>. Samples used: {trainingResults.samplesUsed}</div>
+                        <div>. Samples used: {trainingResults.samples_used}</div>
                         <div>. Training time: {trainingResults.training_time_seconds}s</div>
                         <div>. Final loss: {trainingResults.final_gaze_loss?.toFixed(4)}</div>
                         <div>. Pixel error: {trainingResults.avg_pixel_loss?.toFixed(1)} pixels</div>
@@ -321,7 +321,7 @@ const CalibrationControls = ({
                             onMouseOver={(e) => activeModel !== 'original' && !isLoading && (e.target.style.backgroundColor = '#d39e00')}
                             onMouseOut={(e) => activeModel !== 'original' && !isLoading && (e.target.style.backgroundColor = '#ffc107')}
                         >
-                            Orignal Model
+                            Original Model
                         </button>
 
                         <button

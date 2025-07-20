@@ -1,12 +1,15 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useDeferredValue } from "react";
 import * as tf from "@tensorflow/tfjs";
 import * as faceLandmarksDetection from "@tensorflow-models/face-landmarks-detection";
 import { drawMesh } from "../utilities";
-import { useGazePrediction } from "../hooks/useGazePrediction";
+import { useEyeTracking } from "../hooks/useEyeTracking";
+
 import WebcamComponent from "./WebcamComponent";
 import EyeCanvas from "./EyeCanvas";
 import DebugInfo from "./DebugInfo";
 import GazeIndicator from "./GazeIndicator";
+import CalibrationControls from "./CalibrationControls";
+import CalibrationDot from "./CalibrationDot";
 
 function FaceDetection() {
     const webcamRef = useRef(null);
@@ -15,34 +18,70 @@ function FaceDetection() {
     const rightEyeCanvasRef = useRef(null);
     const [faceDetected, setFaceDetected] = useState(false);
     const [lastError, setLastError] = useState(null);
+    const [detector, setDetector] = useState(null);
 
     const {
         gazeCoordinates,
         isProcessing,
-        serverStatus,
         predictionCount,
-        lastError: gazeError,
-        predictGaze
-    } = useGazePrediction();
+        predictGaze,
 
-    const combinedError = lastError || gazeError;
+        calibrationState,
+        samplesCollected,
+        maxSamples,
+        progressPercent,
+        canFinish,
+        isLoading,
+        activeModel,
+        hasCalibrated,
+        trainingResults,
+        startCalibration,
+        addCalibrationSample,
+        finishCalibration,
+        resetCalibration,
+        switchModel,
+        isActive: isCalibrationActive,
 
-    const runFaceMesh = async () => {
+        serverStatus,
+        isConnected,
+        
+        lastError: eyeTrackingError,
+        gazeError,
+        calibrationError,
+    } = useEyeTracking();
+
+    console.log("Calibration Debug:", {
+        calibrationState,
+        isCalibrationActive,
+        samplesCollected,
+        maxSamples,
+        progressPercent,
+        canFinish,
+        timestamp: new Date().toISOString()
+    });
+
+    console.log("Component: Current hook values:", {
+        serverStatus,
+        isConnected,
+        timestamp: new Date().toISOString()
+    });
+
+    const combinedError = lastError || eyeTrackingError;
+
+    const initializeFaceMesh = async () => {
         try {
             console.log("Loading Face Landmarks model...");
-            
+
             const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
             const detectorConfig = {
                 runtime: 'tfjs',
                 refineLandmarks: true,
             };
-            
-            const detector = await faceLandmarksDetection.createDetector(model, detectorConfig);
+
+            const newDetector = await faceLandmarksDetection.createDetector(model, detectorConfig);
             console.log("Face Landmarks model loaded successfully");
-            
-            setInterval(() => {
-                detect(detector);
-            }, 200);
+
+            setDetector(newDetector);
         } catch (error) {
             console.log("Error loading Face Landmarks:", error);
             setLastError(`Face Landmarks loading error: ${error.message}`);
@@ -69,7 +108,7 @@ function FaceDetection() {
                 setFaceDetected(face.length > 0);
 
                 if (face.length > 0) {
-                    console.log(`Face detected with ${face[0].keypoints.length} keypoints`);
+                    // console.log(`Face detected with ${face[0].keypoints.length} keypoints`);
 
                     const ctx = canvasRef.current.getContext("2d");
                     drawMesh(face, ctx);
@@ -78,7 +117,7 @@ function FaceDetection() {
                     const rightEyeIndices = [362, 263, 387, 386, 385, 384, 398, 373, 374, 380, 381, 382];
                     const leftBox = getEyeBox(keypoints, leftEyeIndices);
                     const rightBox = getEyeBox(keypoints, rightEyeIndices);
-                    console.log("Eye boxes:", { leftBox, rightBox });
+                    // console.log("Eye boxes:", { leftBox, rightBox });
 
                     if (leftEyeCanvasRef.current.width === 0) {
                         leftEyeCanvasRef.current.width = 224;
@@ -115,20 +154,33 @@ function FaceDetection() {
                         rightEyeCanvasRef.current.height
                     );
 
-                    console.log("Prediction conditions check:", {
-                        isProcessing, 
-                        serverStatus, 
-                        leftBoxValid: leftBox.width > 0,
-                        rightBoxValid: rightBox.width > 0,
-                        leftBoxWidth: leftBox.width,
-                        rightBoxWidth: rightBox.width
-                    });
-                    
-                    if (!isProcessing && leftBox.width > 0 && rightBox.width > 0) {
-                        console.log("All condition met - Calling predictGaze...");
-                        predictGaze(leftEyeCanvasRef.current, rightEyeCanvasRef.current);
-                    } else {
-                        console.log("Condition not met - skipping prediction");
+                    if (leftBox.width > 0 && rightBox.width > 0) {
+                        console.log("Detection check:", {
+                            isProcessing,
+                            isConnected,
+                            serverStatus,
+                            isCalibrationActive,
+                            leftBoxWidth: leftBox.width,
+                            rightBoxWidth: rightBox.width,
+                            timestamp: new Date().toISOString()
+                        });
+
+                        if (!isProcessing && isConnected) {
+                            console.log("Running gaze prediction...");
+                            predictGaze(leftEyeCanvasRef.current, rightEyeCanvasRef.current);
+                        } else {
+                            console.log("Skipping prediction:", {
+                                isProcessing,
+                                isConnected,
+                                serverStatus,
+                                reason: isProcessing ? "Still processing" : "Server not connected",
+                                timestamp: new Date().toISOString()
+                            });
+                        }
+
+                        if (isCalibrationActive) {
+                            console.log("Calibration mode - eye images ready for capture");
+                        }
                     }
                 } else {
                     console.log("No face detected");
@@ -160,11 +212,101 @@ function FaceDetection() {
         };
     };
 
+    const handleCalibrationCapture = async (targetX, targetY) => {
+        console.log("handleCalibrationCapture called!");
+        console.log(`Capturing calibration sample at (${targetX.toFixed(3)}, ${targetY.toFixed(3)})`);
+        console.log("Current state:", {
+            isCalibrationActive,
+            calibrationState,
+            faceDetected,
+            samplesCollected,
+            leftEyeCanvas: !!leftEyeCanvasRef.current,
+            rightEyeCanvas: !!rightEyeCanvasRef.current
+        });
+        
+        if (!leftEyeCanvasRef.current || !rightEyeCanvasRef.current) {
+            console.error("Eye canvases not ready for calibration");
+            return;
+        }
+        if (!faceDetected) {
+            console.warn("No face detected - skipping calibration sample");
+            return;
+        }
+
+        try {
+            console.log("Calling addCalibrationSample...")
+            const result = await addCalibrationSample(
+                leftEyeCanvasRef.current,
+                rightEyeCanvasRef.current,
+                targetX,
+                targetY
+            );
+            console.log("addCalibrationSample result:", result);
+
+            if (result.success) {
+                console.log(`Calibration sample added successfully! Progress: ${(result.progress * 100).toFixed(1)}%`);
+            } else {
+                console.error("Failed to add calibration sample:", result.error);
+            }
+        } catch (error) {
+            console.error("Error during calibration capture:", error);
+        }
+    };
+
+    const handleCalibrationComplete = async () => {
+        console.log("Calibration sample collection completed!");
+
+        try {
+            const result = await finishCalibration();
+            if (result.success) {
+                console.log("Calibration training completed successfully!");
+                console.log("Training results:", result.trainingInfo);
+            } else {
+                console.error("Calibration training failed:", result.error);
+            }
+        } catch (error) {
+            console.error("Error finishing calibration:", error);
+        }
+    };
+
+    const handleCalibrationCancel = async () => {
+        console.log("Calibration cancelled by user");
+
+        try {
+            await resetCalibration();
+            console.log("Calibration reset successfully");
+        } catch (error) {
+            console.error("Error resetting calibration:", error);
+        }
+    };
+
     useEffect(() => {
-        runFaceMesh();
-        return () => {
-        };
+        console.log("Initializing face detector...");
+        initializeFaceMesh();
     }, []);
+
+    useEffect(() => {
+        if (!detector) {
+            console.log("Detector not ready yet...");
+            return;
+        }
+        console.log("Setting up detection loop with current state:", {
+            isConnected,
+            serverStatus,
+            isProcessing,
+            isCalibrationActive,
+            timestamp: new Date().toISOString()
+        });
+
+        const intervalID = setInterval(() => {
+            detect(detector);
+        }, 200);
+
+        return () => {
+            console.log("Cleaning up detection interval");
+            clearInterval(intervalID);
+        };
+    }, [detector, isConnected, serverStatus, isProcessing, isCalibrationActive, predictGaze]);
 
     return (
         <div className="face-detection-container">
@@ -197,6 +339,16 @@ function FaceDetection() {
                 marginLeft="170px"
             />
 
+            <CalibrationDot 
+                isActive={isCalibrationActive}
+                onCaptureSample={handleCalibrationCapture}
+                onComplete={handleCalibrationComplete}
+                onCancel={handleCalibrationCancel}
+                samplesCollected={samplesCollected}
+                maxSamples={maxSamples}
+                progressPercent={progressPercent}
+            />
+
             <DebugInfo 
                 serverStatus={serverStatus}
                 faceDetected={faceDetected}
@@ -204,12 +356,65 @@ function FaceDetection() {
                 predictionCount={predictionCount}
                 gazeCoordinates={gazeCoordinates}
                 lastError={combinedError}
+                calibrationState={calibrationState}
+                activeModel={activeModel}
+                samplesCollected={samplesCollected}
             />
 
             <GazeIndicator 
                 gazeCoordinates={gazeCoordinates}
                 serverStatus={serverStatus}
+                isCalibrationActive={isCalibrationActive}
+                activeModel={activeModel}
             />
+
+            <CalibrationControls 
+                calibrationState={calibrationState}
+                samplesCollected={samplesCollected}
+                maxSamples={maxSamples}
+                progressPercent={progressPercent}
+                canFinish={canFinish}
+                isLoading={isLoading}
+                activeModel={activeModel}
+                hasCalibrated={hasCalibrated}
+                trainingResults={trainingResults}
+                lastError={calibrationError}
+                onStartCalibration={async () => {
+                    console.log("Start Calibration button clicked!");
+                    const result = await startCalibration();
+                    console.log("Start Calibration result:", result);
+                    return result;
+                }}
+                onFinishCalibration={handleCalibrationComplete}
+                onResetCalibration={handleCalibrationCancel}
+                onSwitchModel={switchModel}
+            />
+
+            {/* DEBUG: Test calibration button */}
+            {isCalibrationActive && (
+                <button
+                    onClick={() => {
+                        console.log("🧪 TEST BUTTON: Manual calibration trigger!");
+                        handleCalibrationCapture(0.5, 0.5); 
+                    }}
+                    style={{
+                        position: 'fixed',
+                        top: '20px',
+                        right: '20px',
+                        padding: '10px 20px',
+                        backgroundColor: 'red',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        zIndex: 9999
+                    }}
+                >
+                    🧪 TEST CAPTURE
+                </button>
+            )}
         </div>
     );
 }
