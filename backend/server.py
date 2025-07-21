@@ -21,50 +21,111 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
+# class GazeTrackingModel(nn.Module):
+#     def __init__(self):
+#         super(GazeTrackingModel, self).__init__()
+
+#         self.left_eye_cnn = nn.Sequential(
+#             nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
+#             nn.ReLU(),
+#             nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+#             nn.ReLU(),
+#             nn.Flatten(),
+#         )
+
+#         self.right_eye_cnn = nn.Sequential(
+#             nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
+#             nn.ReLU(),
+#             nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+#             nn.ReLU(),
+#             nn.Flatten(),
+#         )
+
+#         sample_input = torch.randn(1, 3, 224, 224)
+#         with torch.no_grad():
+#             cnn_output_size = self._get_cnn_output_size(sample_input)
+
+#         self.fc_combined = nn.Sequential(
+#             nn.Linear(cnn_output_size * 2, 128),
+#             nn.ReLU(),
+#             nn.Linear(128, 2),
+#             # nn.Sigmoid(),
+#         )
+    
+#     def _get_cnn_output_size(self, x):
+#         with torch.no_grad():
+#             x = self.left_eye_cnn(x)
+#             return x.view(1, -1).shape[1]
+    
+#     def forward(self, eye_left, eye_right):
+#         left_eye_features = self.left_eye_cnn(eye_left)
+#         right_eye_features = self.right_eye_cnn(eye_right)
+#         combined_features = torch.cat([
+#             left_eye_features,
+#             right_eye_features,
+#         ], dim=1)
+#         gaze_output = self.fc_combined(combined_features)
+
+#         return gaze_output
+
 class GazeTrackingModel(nn.Module):
     def __init__(self):
         super(GazeTrackingModel, self).__init__()
 
         self.left_eye_cnn = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
+            nn.Conv2d(3, 128, kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            nn.AdaptiveAvgPool2d((8, 8)),
             nn.Flatten(),
+            
+            nn.Linear(128 * 64, 64),  
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.15)
         )
 
         self.right_eye_cnn = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
+            nn.Conv2d(3, 128, kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            nn.AdaptiveAvgPool2d((8, 8)),
             nn.Flatten(),
+            
+            nn.Linear(128 * 64, 64),  
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.15)
         )
 
-        sample_input = torch.randn(1, 3, 224, 224)
-        with torch.no_grad():
-            cnn_output_size = self._get_cnn_output_size(sample_input)
-
-        self.fc_combined = nn.Sequential(
-            nn.Linear(cnn_output_size * 2, 128),
-            nn.ReLU(),
-            nn.Linear(128, 2),
-            # nn.Sigmoid(),
+        self.shared_features = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2)
         )
-    
-    def _get_cnn_output_size(self, x):
-        with torch.no_grad():
-            x = self.left_eye_cnn(x)
-            return x.view(1, -1).shape[1]
+
+        self.gaze_x_head = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(inplace=True),
+            nn.Linear(32, 1)
+        )
+
+        self.gaze_y_head = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(inplace=True),
+            nn.Linear(32, 1)
+        )
     
     def forward(self, eye_left, eye_right):
         left_eye_features = self.left_eye_cnn(eye_left)
         right_eye_features = self.right_eye_cnn(eye_right)
-        combined_features = torch.cat([
-            left_eye_features,
-            right_eye_features,
-        ], dim=1)
-        gaze_output = self.fc_combined(combined_features)
+        combined_features = torch.cat([left_eye_features, right_eye_features], dim=1)
+        shared_features = self.shared_features(combined_features)
+        
+        gaze_x = self.gaze_x_head(shared_features)
+        gaze_y = self.gaze_y_head(shared_features)
+
+        gaze_output = torch.cat([gaze_x, gaze_y], dim=1)
 
         return gaze_output
 
@@ -95,10 +156,22 @@ def preprocess_image(base64_image):
         logger.error(traceback.format_exc())
         return None
 
-def gaze_loss(predicted, actual, beta=1.0):
-    smooth_l1 = F.smooth_l1_loss(predicted, actual)
+# def gaze_loss(predicted, actual, beta=1.0):
+#     smooth_l1 = F.smooth_l1_loss(predicted, actual)
+#     euclidean_distance = torch.sqrt(torch.sum((predicted - actual) ** 2, dim=1)).mean()
+#     return smooth_l1 + beta * euclidean_distance
+
+def gaze_loss(predicted, actual, vertical_weight=2.0):
+    pred_x, pred_y = predicted[:, 0], predicted[:, 1]
+    actual_x, actual_y = actual[:, 0], actual[:, 1]
+
+    loss_x = F.smooth_l1_loss(pred_x, actual_x)
+    loss_y = F.smooth_l1_loss(pred_y, actual_y) * vertical_weight
+
     euclidean_distance = torch.sqrt(torch.sum((predicted - actual) ** 2, dim=1)).mean()
-    return smooth_l1 + beta * euclidean_distance
+    total_loss = loss_x + loss_y + 0.3 * euclidean_distance
+
+    return total_loss
 
 def train_calibrated_model(calibration_samples, base_model, device, epochs=20, lr=1e-6, beta=0.5):
     logger.info(f"Starting calibration training with {len(calibration_samples)} samples...")
@@ -136,7 +209,7 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
         optimizer.zero_grad()
 
         predictions = calibrated_model(left_batch, right_batch)
-        loss = gaze_loss(predictions, target_batch, beta=beta)
+        loss = gaze_loss(predictions, target_batch)
 
         loss.backward()
         optimizer.step()
@@ -154,7 +227,7 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
     calibrated_model.eval()
     with torch.no_grad():
         final_predictions = calibrated_model(left_batch, right_batch)
-        final_loss = gaze_loss(final_predictions, target_batch, beta=beta).item()
+        final_loss = gaze_loss(final_predictions, target_batch).item()
         mse_loss = F.mse_loss(final_predictions, target_batch).item()
         pixel_errors = torch.abs(final_predictions - target_batch) * torch.tensor([1920, 1000]).to(device)
         avg_pixel_error = pixel_errors.mean().item()
@@ -180,7 +253,7 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
 
 print("Loading eye tracking model...")
 model = GazeTrackingModel()
-model_path = "/app/model/INTERRUPTED_gaze_model_epoch014_20250628_120254.pth"
+model_path = "/app/model/INTERRUPTED_gaze_model_epoch048_20250720_230352.pth"
 try:
     checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['model_state_dict'])
