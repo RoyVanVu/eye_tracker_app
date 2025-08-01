@@ -6,15 +6,28 @@ const CalibrationDot = ({
     onComplete,
     onCancel,
     samplesCollected = 0,
-    maxSamples = 50,
+    maxSamples = 200,
     progressPercent = 0
 }) => {
+    const GRID_COLS = 10;
+    const GRID_ROWS = 10;
+    const TOTAL_GRID_POINTS = GRID_COLS * GRID_ROWS;
+
+    const COUNTDOWN_TIME = 0.5;
+    const CAPTURE_DELAY = 300;
+    const DOT_TRANSITION_DELAY = 200;
+    const COUNTDOWN_INTERVAL = 100;
+
     const [currentDot, setCurrentDot] = useState({ 
         x: 0.5,
         y: 0.5
     });
+    const [currentGridIndex, setCurrentGridIndex] = useState(0);
     const [dotState, setDotState] = useState('waiting');
-    const [countdown, setCountdown] = useState(3);
+    const [countdown, setCountdown] = useState(COUNTDOWN_TIME);
+    const [isCapturing, setIsCapturing] = useState(false);
+    const [lastCapturedPosition, setLastCapturedPosition] = useState(null);
+    const [isProcessingSample, setIsProcessingSample] = useState(false);
 
     const currentDotRef = useRef(currentDot);
     const samplesCollectedRef = useRef(samplesCollected);
@@ -38,115 +51,228 @@ const CalibrationDot = ({
         onCompleteRef.current = onComplete;
     }, [onComplete]);
 
+    useEffect(() => {
+        if (samplesCollected >= maxSamples && isActive) {
+            console.log(`Maximum samples (${maxSamples}) reached, completing calibration`);
+            onComplete();
+        }
+    }, [samplesCollected, maxSamples, isActive, onComplete]);
+
     console.log("CalibrationDot render:", {
         isActive,
         samplesCollected,
         dotState,
-        countdown
+        countdown,
+        currentGridIndex,
+        isCapturing,
+        isProcessingSample,
     });
 
-    const generateRandomPosition = useCallback(() => {
+    const getGridPosition = useCallback((gridIndex) => {
+        const col = Math.floor(gridIndex / GRID_ROWS);
+        const row = gridIndex % GRID_ROWS;
+
         const margin = 0.05;
-        const x = margin + Math.random() * (1 - 2 * margin);
-        const y = margin + Math.random() * (1 - 2 * margin);
-        return { 
-            x, 
-            y 
+        const usableWidth = 1 - 2 * margin;
+        const usableHeight = 1 - 2 * margin;
+
+        let x, y;
+        if (GRID_COLS === 1) {
+            x = 0.5;
+        } else {
+            x = margin + (col / (GRID_COLS - 1)) * usableWidth;
+        }
+
+        if (GRID_ROWS === 1) {
+            y = 0.5;
+        } else {
+            y = margin + (row / (GRID_ROWS - 1)) * usableHeight;
+        }
+
+        x = Math.max(margin, Math.min(1 - margin, x));
+        y = Math.max(margin, Math.min(1 - margin, y));
+
+        return {
+            x,
+            y
         };
-    }, []);
+    }, [GRID_COLS, GRID_ROWS]);
 
     const moveToNextPoint = useCallback(() => {
+        if (samplesCollectedRef.current >= maxSamplesRef.current) {
+            console.log("Maximum samples reached, stopping calibration");
+            onCompleteRef.current();
+            return;
+        }
+
         console.log("Moving to next point");
-        const newPosition = generateRandomPosition();
+
+        const nextGridIndex = (currentGridIndex + 1) % TOTAL_GRID_POINTS;
+        setCurrentGridIndex(nextGridIndex);
+
+        const newPosition = getGridPosition(nextGridIndex);
         setCurrentDot(newPosition);
         setDotState('waiting');
-        setCountdown(3);
+        setCountdown(COUNTDOWN_TIME);
+        setIsCapturing(false);
+        setIsProcessingSample(false);
+        setLastCapturedPosition(null);
 
         setTimeout(() => {
+            if (samplesCollectedRef.current >= maxSamplesRef.current) {
+                console.log("Maximum samples reached during transition, stopping calibration");
+                onCompleteRef.current();
+                return;
+            }
+
             console.log("Auto-starting next dot sequence");
             setDotState('active');
-            setCountdown(3);
-        }, 1000)
-    }, [generateRandomPosition]);
+            setCountdown(COUNTDOWN_TIME);
+        }, DOT_TRANSITION_DELAY);
+    }, [currentGridIndex, getGridPosition, TOTAL_GRID_POINTS, COUNTDOWN_TIME, DOT_TRANSITION_DELAY]);
 
     const captureCurrentSample = useCallback(() => {
-        console.log("Capturing sample!");
-        setDotState('capturing');
+        if (samplesCollectedRef.current >= maxSamplesRef.current) {
+            console.log("Maximum samples already reached, not capturing");
+            onCompleteRef.current();
+            return;
+        }
 
-        onCaptureSampleRef.current(currentDotRef.current.x, currentDotRef.current.y);
+        if (isCapturing) {
+            console.log("Already capturing, ignoring duplicate call");
+            return;
+        }
+
+        if (isProcessingSample) {
+            console.log("Already processing sample, ignoring duplicate call");
+            return;
+        }
+
+        const currentPos = currentDotRef.current;
+        if (lastCapturedPosition &&
+            Math.abs(lastCapturedPosition.x - currentPos.x) < 0.001 &&
+            Math.abs(lastCapturedPosition.y - currentPos.y) < 0.001
+        ) {
+            console.log("Same position already captured, ignoring duplicate");
+            return;
+        }
+
+        console.log("Capturing sample!");
+        setIsCapturing(true);
+        setIsProcessingSample(true);
+        setDotState('capturing');
+        setLastCapturedPosition({
+            x: currentPos.x,
+            y: currentPos.y
+        });
+
+        onCaptureSampleRef.current(currentPos.x, currentPos.y);
 
         setTimeout(() => {
+            const currentSamplesCount = samplesCollectedRef.current + 1;
+
             if (samplesCollectedRef.current + 1 >= maxSamplesRef.current) {
                 console.log("Calibration complete!");
                 onCompleteRef.current();
             } else {
                 moveToNextPoint();
             }
-        }, 800);
-    }, [moveToNextPoint]);
+        }, CAPTURE_DELAY);
+    }, [moveToNextPoint, isCapturing, isProcessingSample, lastCapturedPosition, CAPTURE_DELAY]);
 
     useEffect(() => {
         if (!isActive || dotState !== 'active') {
             return;
         }
+        
+        if (samplesCollected >= maxSamples) {
+            console.log("Max samples reached, not starting countdown");
+            onComplete();
+            return;
+        }
+
         console.log("Starting countdown timer");
 
         const intervalId = setInterval(() => {
             setCountdown(prevCountdown => {
-                console.log(`Countdown tick: ${prevCountdown}`);
+                const newCountDown = prevCountdown - (COUNTDOWN_INTERVAL / 1000);
+                console.log(`Countdown tick: ${newCountDown.toFixed(1)}`);
 
-                if (prevCountdown > 1) {
-                    return prevCountdown - 1;
-                } else {
-                    console.log("Countdown complete - capturing!");
+                if (newCountDown <= 0) {
+                    console.log("Countdown complete - capturing");
                     clearInterval(intervalId);
                     captureCurrentSample();
                     return 0;
+                } else {
+                    return newCountDown;
                 }
             });
-        }, 1000);
+        }, COUNTDOWN_INTERVAL);
 
         return () => {
             console.log("Cleaning up countdown timer");
             clearInterval(intervalId);
         };
-    }, [isActive, dotState]);
+    }, [isActive, dotState, captureCurrentSample, COUNTDOWN_INTERVAL]);
 
     useEffect(() => {
         if (isActive) {
             console.log("Calibration activated");
-            setCurrentDot({ 
-                x: 0.5, 
-                y: 0.5 
-            });
+            setCurrentGridIndex(0);
+            const startPosition = getGridPosition(0);
+            setCurrentDot(startPosition);
             setDotState('waiting');
-            setCountdown(3);
+            setCountdown(COUNTDOWN_TIME);
+            setIsCapturing(false);
+            setIsProcessingSample(false);
+            setLastCapturedPosition(null);
 
             setTimeout(() => {
+                if (samplesCollectedRef.current >= maxSamplesRef.current) {
+                    console.log("Max samples already reached, not starting calibration");
+                    onCompleteRef.current();
+                    return;
+                }
+
                 console.log("Starting first dot sequence");
                 setDotState('active');
-                setCountdown(3);
-            }, 1000);
+                setCountdown(COUNTDOWN_TIME);
+            }, DOT_TRANSITION_DELAY);
         } else {
             console.log("Calibration deactivated");
             setDotState('waiting');
-            setCountdown(3);
+            setCountdown(COUNTDOWN_TIME);
+            setCurrentGridIndex(0);
+            setIsCapturing(false);
+            setIsProcessingSample(false);
+            setLastCapturedPosition(null);
         }
-    }, [isActive]);
+    }, [isActive, getGridPosition, COUNTDOWN_TIME, DOT_TRANSITION_DELAY]);
 
     useEffect(() => {
         const handleKeyPress = (event) => {
             if (!isActive) return;
 
+            if (samplesCollected >= maxSamples) {
+                if (event.key === 'Escape') {
+                    console.log("ESC pressed - max samples reached");
+                    onCancel();
+                }
+                return;
+            }
+
             if (event.key === 'Escape') {
                 console.log("ESC pressed");
                 onCancel();
             } else if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                event.stopPropagation();
+
                 console.log("Space/Enter pressed");
                 if (dotState === 'waiting') {
                     setDotState('active');
-                    setCountdown(3);
-                } else if (dotState === 'active') {
+                    setCountdown(COUNTDOWN_TIME);
+                } else if (dotState === 'active' && !isProcessingSample) {
                     captureCurrentSample();
                 }
             }
@@ -154,7 +280,7 @@ const CalibrationDot = ({
 
         window.addEventListener('keydown', handleKeyPress);
         return () => window.removeEventListener('keydown', handleKeyPress);
-    }, [isActive, dotState, onCancel, captureCurrentSample]);
+    }, [isActive, dotState, onCancel, captureCurrentSample, isProcessingSample, COUNTDOWN_TIME]);
 
     if (!isActive) return null;
 
@@ -204,15 +330,15 @@ const CalibrationDot = ({
                     backgroundColor: getDotColor(),
                     boxShadow: getDotShadow(),
                     transform: getDotTransform(),
-                    transition: 'all 0.5s ease',
+                    transition: 'all 0.2s ease',
                     border: '3px solid white',
-                    zIndex: 1000,
+                    zIndex: 1001,
                     pointerEvents: 'none'
                 }}
             />
 
             {/* Countdown display */}
-            {dotState === 'active' && countdown > 0 && (
+            {/*{dotState === 'active' && countdown > 0 && (
                 <div style={{
                     position: 'fixed',
                     left: `${dotX + dotSize / 2}px`,
@@ -228,7 +354,7 @@ const CalibrationDot = ({
                 }}>
                     {countdown}
                 </div>
-            )}
+            )}*/}
 
             {/* Progress indicator */}
             <div style={{

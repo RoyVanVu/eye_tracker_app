@@ -108,8 +108,6 @@ function FaceDetection() {
                 setFaceDetected(face.length > 0);
 
                 if (face.length > 0) {
-                    // console.log(`Face detected with ${face[0].keypoints.length} keypoints`);
-
                     const ctx = canvasRef.current.getContext("2d");
                     drawMesh(face, ctx);
                     const keypoints = face[0].keypoints;
@@ -117,8 +115,7 @@ function FaceDetection() {
                     const rightEyeIndices = [362, 263, 387, 386, 385, 384, 398, 373, 374, 380, 381, 382];
                     const leftBox = getEyeBox(keypoints, leftEyeIndices);
                     const rightBox = getEyeBox(keypoints, rightEyeIndices);
-                    // console.log("Eye boxes:", { leftBox, rightBox });
-
+                    
                     if (leftEyeCanvasRef.current.width === 0) {
                         leftEyeCanvasRef.current.width = 224;
                         leftEyeCanvasRef.current.height = 224;
@@ -389,32 +386,6 @@ function FaceDetection() {
                 onResetCalibration={handleCalibrationCancel}
                 onSwitchModel={switchModel}
             />
-
-            {/* DEBUG: Test calibration button */}
-            {isCalibrationActive && (
-                <button
-                    onClick={() => {
-                        console.log("🧪 TEST BUTTON: Manual calibration trigger!");
-                        handleCalibrationCapture(0.5, 0.5); 
-                    }}
-                    style={{
-                        position: 'fixed',
-                        top: '20px',
-                        right: '20px',
-                        padding: '10px 20px',
-                        backgroundColor: 'red',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        fontSize: '14px',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        zIndex: 9999
-                    }}
-                >
-                    🧪 TEST CAPTURE
-                </button>
-            )}
         </div>
     );
 }

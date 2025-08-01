@@ -20,6 +20,7 @@ export const useEyeTracking = () => {
     const [trainingResults, setTrainingResults] = useState(null);
     const [calibrationError, setCalibrationError] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isFinishing, setIsFinishing] = useState(false);
 
     const [serverStatus, setServerStatus] = useState("Connecting...");
     const [serverError, setServerError] = useState(null);
@@ -40,7 +41,6 @@ export const useEyeTracking = () => {
                 console.log("Frontend: response.data =", response.data);
                 console.log("Frontend: typeof response.status =", typeof response.status);
                 
-                // More explicit check
                 if (response.status === 200) {
                     console.log("Frontend: Status is 200, setting to Connected");
                     setServerStatus("Connected");
@@ -256,21 +256,30 @@ export const useEyeTracking = () => {
             };
         }
 
+        if (isFinishing) {
+            console.log("Calibration finish already in progress, ignoring duplicate call");
+            return {
+                success: false,
+                error: "Already finishing calibration"
+            };
+        }
+
         try {
+            setIsFinishing(true);
             setIsLoading(true);
             setCalibrationState('training');
             setCalibrationError(null);
             console.log("Starting calibration training...");
 
             const params = {
-                epochs: 20,
+                epochs: 50,
                 learning_rate: 1e-6,
                 beta: 0.5,
                 ...trainingParams
             };
 
             const response = await axios.post(`${API_URL}/calibration/finish`, params, {
-                timeout: 60000,
+                timeout: 300000,
                 headers: { 
                     'Content-Type': 'application/json' 
                 }
@@ -301,8 +310,9 @@ export const useEyeTracking = () => {
             };
         } finally {
             setIsLoading(false);
+            setIsFinishing(false);
         }
-    }, [calibrationState, canFinish]);
+    }, [calibrationState, canFinish, isFinishing]);
 
     const resetCalibration =  useCallback(async () => {
         try {

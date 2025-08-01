@@ -19,22 +19,37 @@ const CalibrationControls = ({
     onResetCalibration,
     onSwitchModel,
 }) => {
-    const handleStartCalibration = () => {
+    const handleStartCalibration = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (isLoading) return;
         onStartCalibration();
     };
     
-    const handleFinishCalibration = () => {
+    const handleFinishCalibration = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (isLoading || !canFinish) return;
-        onFinishCalibration();
+
+        e.target.disabled = true;
+
+        onFinishCalibration().finally(() => {
+            setTimeout(() => {
+                if (e.target) e.target.disabled = false;
+            }, 1000);
+        });
     };
 
-    const handleResetCalibration = () => {
+    const handleResetCalibration = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (isLoading) return;
         onResetCalibration();
     };
 
-    const handleSwitchModel = (modelType) => {
+    const handleSwitchModel = (modelType) => (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (isLoading) return;
         onSwitchModel(modelType);
     };
@@ -244,6 +259,7 @@ const CalibrationControls = ({
                             cursor: isLoading ? 'not-allowed' : 'pointer',
                             opacity: isLoading ? 0.6 : 1,
                             transition: 'all 0.2s ease',
+                            userSelect: 'none',
                         }}
                         onMouseOver={(e) => !isLoading && (e.target.style.backgroundColor = '#0056b3')}
                         onMouseOut={(e) => !isLoading && (e.target.style.backgroundColor = '#007bff')}
@@ -268,6 +284,7 @@ const CalibrationControls = ({
                             cursor: isLoading ? 'not-allowed' : 'pointer',
                             opacity: isLoading ? 0.6 : 1,
                             transition: 'all 0.2s ease',
+                            userSelect: 'none',
                         }}
                         onMouseOver={(e) => !isLoading && (e.target.style.backgroundColor = '#1e7e34')}
                         onMouseOut={(e) => !isLoading && (e.target.style.backgroundColor = '#28a745')}
@@ -292,6 +309,7 @@ const CalibrationControls = ({
                             cursor: isLoading ? 'not-allowed' : 'pointer',
                             opacity: isLoading ? 0.6 : 1,
                             transition: 'all 0.2s ease',
+                            userSelect: 'none',
                         }}
                         onMouseOver={(e) => !isLoading && (e.target.style.backgroundColor = '#c82333')}
                         onMouseOut={(e) => !isLoading && (e.target.style.backgroundColor = '#dc3545')}
@@ -317,6 +335,7 @@ const CalibrationControls = ({
                                 cursor: (isLoading || activeModel === 'original') ? 'not-allowed' : 'pointer',
                                 opacity: (isLoading || activeModel === 'original') ? 0.6 : 1,
                                 transition: 'all 0.2s ease',
+                                userSelect: 'none',
                             }}
                             onMouseOver={(e) => activeModel !== 'original' && !isLoading && (e.target.style.backgroundColor = '#d39e00')}
                             onMouseOut={(e) => activeModel !== 'original' && !isLoading && (e.target.style.backgroundColor = '#ffc107')}
@@ -338,6 +357,7 @@ const CalibrationControls = ({
                                 cursor: (isLoading || activeModel === 'calibrated') ? 'not-allowed' : 'pointer',
                                 opacity: (isLoading || activeModel === 'calibrated') ? 0.6 : 1,
                                 transition: 'all 0.2s ease',
+                                userSelect: 'none',
                             }}
                             onMouseOver={(e) => activeModel !== 'calibrated' && !isLoading && (e.target.style.backgroundColor = '#138496')}
                             onMouseOut={(e) => activeModel !== 'calibrated' && !isLoading && (e.target.style.backgroundColor = '#17a2b8')}

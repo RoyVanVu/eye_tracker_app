@@ -82,7 +82,7 @@ class GazeTrackingModel(nn.Module):
             
             nn.Linear(128 * 64, 64),  
             nn.ReLU(inplace=True),
-            nn.Dropout(0.15)
+            nn.Dropout(0.3)
         )
 
         self.right_eye_cnn = nn.Sequential(
@@ -95,7 +95,7 @@ class GazeTrackingModel(nn.Module):
             
             nn.Linear(128 * 64, 64),  
             nn.ReLU(inplace=True),
-            nn.Dropout(0.15)
+            nn.Dropout(0.3)
         )
 
         self.shared_features = nn.Sequential(
@@ -169,15 +169,20 @@ def gaze_loss(predicted, actual, vertical_weight=2.0):
     loss_y = F.smooth_l1_loss(pred_y, actual_y) * vertical_weight
 
     euclidean_distance = torch.sqrt(torch.sum((predicted - actual) ** 2, dim=1)).mean()
-    total_loss = loss_x + loss_y + 0.3 * euclidean_distance
+    total_loss = loss_x + loss_y + 0.3 * euclidean_distance 
 
     return total_loss
 
-def train_calibrated_model(calibration_samples, base_model, device, epochs=20, lr=1e-6, beta=0.5):
+def train_calibrated_model(calibration_samples, base_model, device, epochs=50, lr=1e-6):
+    logger.info(f"train_calibrated_model called with epochs={epochs}, lr={lr}")
     logger.info(f"Starting calibration training with {len(calibration_samples)} samples...")
 
     calibrated_model = copy.deepcopy(base_model)
     calibrated_model.train()
+    for param in calibrated_model.left_eye_cnn.parameters():
+        param.requires_grad = False
+    for param in calibrated_model.right_eye_cnn.parameters():
+        param.requires_grad = False
     left_eyes = []
     right_eyes = []
     targets = []
@@ -195,8 +200,9 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
     logger.info(f"Right eyes: {right_batch.shape}")
     logger.info(f"Targets: {target_batch.shape}")
 
+    params_to_update = filter(lambda p: p.requires_grad, calibrated_model.parameters())
     optimizer = optim.AdamW(
-        calibrated_model.parameters(),
+        params_to_update,
         lr=lr,
         weight_decay=0.0001,
         amsgrad=False
@@ -205,6 +211,9 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=20, l
 
     best_loss = float('inf')
     training_losses = []
+
+    logger.info(f"Starting training loop for {epochs} epochs")
+
     for epoch in range(epochs):
         optimizer.zero_grad()
 
@@ -270,8 +279,9 @@ print(f"Using device: {device}")
 prediction_counter = 0
 calibration_data = []
 calibrated_model = None
-max_calibration_samples = 50
+max_calibration_samples = 200
 is_calibration_active = False
+is_training_active = False
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -349,6 +359,7 @@ def health_check():
         'predictions_made': prediction_counter,
         'calibration': {
             'is_active': is_calibration_active,
+            'is_training': is_training_active,
             'samples_collected': len(calibration_data),
             'has_calibrated_model': calibrated_model is not None,
             'active_model': 'calibrated' if calibrated_model is not None else 'original'
@@ -557,7 +568,15 @@ def add_test_calibration_sample():
 @app.route('/calibration/finish', methods=['POST'])
 def finish_calibration():
     """Finish calibration by training a personalized model"""
-    global calibration_data, calibrated_model, is_calibration_active, model
+    global calibration_data, calibrated_model, is_calibration_active, model, is_training_active
+
+    if is_training_active:
+        logger.info("Training already in progress, rejecting duplicate request")
+        return jsonify({
+            'error': 'Training already in progress',
+            'status': 'conflict'
+        }), 409
+
     if not is_calibration_active:
         return jsonify({
             'error': 'No active calibration session'
@@ -569,10 +588,11 @@ def finish_calibration():
         }), 400
     
     try:
+        is_training_active = True
         logger.info(f"Starting calibration training...")
 
         data = request.json or {}
-        epochs = data.get('epochs', 20)
+        epochs = data.get('epochs', 50)
         learning_rate = data.get('learning_rate', 1e-7)
         beta = data.get('beta', 0.5)
         training_start = datetime.now()
@@ -582,7 +602,6 @@ def finish_calibration():
             device,
             epochs=epochs,
             lr=learning_rate,
-            beta=beta
         )
         training_time = (datetime.now() - training_start).total_seconds()
         calibrated_model = training_result['model']
@@ -622,6 +641,10 @@ def finish_calibration():
         return jsonify({
             'error': f'Calibration training failed: {str(e)}'
         }), 500
+
+    finally:
+        is_training_active = False
+        logger.info("Training flag cleared")
 
 @app.route('/model/switch', methods=['POST'])
 def switch_model():
