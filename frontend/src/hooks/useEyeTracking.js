@@ -279,7 +279,7 @@ export const useEyeTracking = () => {
             };
 
             const response = await axios.post(`${API_URL}/calibration/finish`, params, {
-                timeout: 300000,
+                timeout: 500000,
                 headers: { 
                     'Content-Type': 'application/json' 
                 }

@@ -332,7 +332,7 @@ const CalibrationDot = ({
                     transform: getDotTransform(),
                     transition: 'all 0.2s ease',
                     border: '3px solid white',
-                    zIndex: 1001,
+                    zIndex: 1002,
                     pointerEvents: 'none'
                 }}
             />

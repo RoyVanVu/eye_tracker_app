@@ -73,47 +73,43 @@ class GazeTrackingModel(nn.Module):
         super(GazeTrackingModel, self).__init__()
 
         self.left_eye_cnn = nn.Sequential(
-            nn.Conv2d(3, 128, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(3, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
 
-            nn.AdaptiveAvgPool2d((8, 8)),
             nn.Flatten(),
             
-            nn.Linear(128 * 64, 64),  
+            nn.Linear(128 * 64 * 784, 64),  
             nn.ReLU(inplace=True),
-            nn.Dropout(0.3)
+            nn.Dropout(0.15)
         )
 
         self.right_eye_cnn = nn.Sequential(
-            nn.Conv2d(3, 128, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(3, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
 
-            nn.AdaptiveAvgPool2d((8, 8)),
             nn.Flatten(),
             
-            nn.Linear(128 * 64, 64),  
+            nn.Linear(128 * 64 * 784, 64),  
             nn.ReLU(inplace=True),
-            nn.Dropout(0.3)
+            nn.Dropout(0.15)
         )
 
         self.shared_features = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(128, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2)
         )
 
         self.gaze_x_head = nn.Sequential(
-            nn.Linear(64, 32),
+            nn.Linear(256, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(32, 1)
+            nn.Linear(512, 1)
         )
 
         self.gaze_y_head = nn.Sequential(
-            nn.Linear(64, 32),
+            nn.Linear(256, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(32, 1)
+            nn.Linear(512, 1)
         )
     
     def forward(self, eye_left, eye_right):
@@ -169,7 +165,7 @@ def gaze_loss(predicted, actual, vertical_weight=2.0):
     loss_y = F.smooth_l1_loss(pred_y, actual_y) * vertical_weight
 
     euclidean_distance = torch.sqrt(torch.sum((predicted - actual) ** 2, dim=1)).mean()
-    total_loss = loss_x + loss_y + 0.3 * euclidean_distance 
+    total_loss = loss_x + loss_y 
 
     return total_loss
 
@@ -262,7 +258,7 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=50, l
 
 print("Loading eye tracking model...")
 model = GazeTrackingModel()
-model_path = "/app/model/INTERRUPTED_gaze_model_epoch048_20250720_230352.pth"
+model_path = "/app/model/FINAL_gaze_model_epoch050_val0.0366_20250730_050810.pth"
 try:
     checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['model_state_dict'])
