@@ -1,3 +1,4 @@
+import os
 import io 
 import torch 
 import torch.nn as nn
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+calibration_image_folder = "/app/calibration"
+os.makedirs(calibration_image_folder, exist_ok=True)
 
 # class GazeTrackingModel(nn.Module):
 #     def __init__(self):
@@ -256,6 +260,56 @@ def train_calibrated_model(calibration_samples, base_model, device, epochs=50, l
         'samples_used': len(calibration_samples)
     }
 
+def save_calibration_image(left_eye_base64, right_eye_base64, target_x, target_y, sample_number):
+    """
+    Save concatenated left and right eye images with gaze coordinates as filename
+
+    Args:
+        left_eye_base64: Base64 encoded left eye image
+        right_eye_base64: Base64 encoded right eye image 
+        target_x: x coordinate of gaze target (0-1)
+        target_y: y coordinate of gaze target (0-1)
+        sample_number: Sequential number of the calibration sample 
+    """
+    try:
+        if ',' in left_eye_base64:
+            left_eye_data = base64.b64decode(left_eye_base64.split(',')[1])
+        else:
+            left_eye_data = base64.b64decode(left_eye_base64)
+
+        if ',' in right_eye_base64:
+            right_eye_data = base64.b64decode(right_eye_base64.split(',')[1])
+        else:
+            right_eye_data = base64.b64decode(right_eye_base64)
+
+        left_eye_img = Image.open(io.BytesIO(left_eye_data))
+        right_eye_img = Image.open(io.BytesIO(right_eye_data))
+
+        if left_eye_img.mode != 'RGB':
+            left_eye_img = left_eye_img.convert('RGB')
+        if right_eye_img.mode != 'RGB':
+            right_eye_img = right_eye_img.convert('RGB')
+        
+        left_width, left_height = left_eye_img.size
+        right_width, right_height = right_eye_img.size
+        total_width = left_width + right_width
+        total_height = max(left_height, right_height)
+
+        concatenated_img = Image.new('RGB', (total_width, total_height), 'black')
+        concatenated_img.paste(left_eye_img, (0, 0))
+        concatenated_img.paste(right_eye_img, (left_width, 0))
+
+        filename = f"gaze_{target_x:.3f}_{target_y:.3f}_sample{sample_number:03d}.jpg"
+        filepath = os.path.join(calibration_image_folder, filename)
+
+        concatenated_img.save(filepath, 'JPEG', quality=90)
+        logger.info(f"Saved calibration image: {filename}")
+        return True, filename
+    except Exception as e:
+        logger.error(f"Error saving calibration image: {e}")
+        logger.error(traceback.format_exc())
+        return False, str(e)
+
 print("Loading eye tracking model...")
 model = GazeTrackingModel()
 model_path = "/app/model/FINAL_gaze_model_epoch050_val0.0366_20250730_050810.pth"
@@ -471,6 +525,17 @@ def add_calibration_sample():
             return jsonify({
                 'error': 'Target coordinates must be between 0 and 1'
             }), 400
+        
+        current_count = len(calibration_data)
+        success, result = save_calibration_image(
+            data['leftEye'],
+            data['rightEye'],
+            target_x,
+            target_y,
+            current_count
+        )
+        if not success:
+            logger.warning(f"Failed to save calibration image: {result}")
 
         sample = {
             'left_eye': left_eye_tensor.squeeze(0).cpu(),
@@ -479,7 +544,7 @@ def add_calibration_sample():
         }
         calibration_data.append(sample)
 
-        current_count = len(calibration_data)
+        # current_count = len(calibration_data)
         logger.info(f"Added calibration sample {current_count}/{max_calibration_samples}")
         logger.info(f"Target: ({target_x:.3f}, {target_y:.3f})")
 
@@ -495,6 +560,10 @@ def add_calibration_sample():
             'can_finish': current_count >= 10,
             'is_complete': current_count >= max_calibration_samples
         })
+
+        if success:
+            response_data['image_saved'] = result
+        return jsonify(response_data)
     
     except ValueError as e:
         logger.error(f"Invalid data format: {e}")

@@ -21,10 +21,10 @@ RUN pip install pybase64 \
     requests 
 
 RUN mkdir -p /app/model && chmod 777 /app/model
-RUN mkdir -p /app/photos && chmod 777 /app/photos
+RUN mkdir -p /app/calibration && chmod 777 /app/calibration
 
 VOLUME /app/model
-VOLUME /app/photos
+VOLUME /app/calibration
 
 COPY server.py /app/server.py
 COPY test_backend.py /app/test_backend.py
